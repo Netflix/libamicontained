@@ -47,9 +47,8 @@ fn my_cgroup() -> Result<PathBuf> {
 }
 
 fn parse_effective_cpus(raw_cpus: String) -> Result<c_int> {
-    let intervals = raw_cpus.trim().split(",").collect::<Vec<_>>();
+    let intervals = raw_cpus.trim().split(",");
     let counts = intervals
-        .iter()
         .map(|i| -> Result<c_int> {
             let membs: Vec<_> = i.split("-").collect();
             if let [start, end] = &membs[..] {
