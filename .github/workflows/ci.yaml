@@ -22,7 +22,7 @@ jobs:
           args: --release --all-features
       - name: Install dependencies
         run: |
-          sudo apt-get install gcc
+          sudo apt-get install gcc bats
       - name: tests
         run: |
           make lint check
