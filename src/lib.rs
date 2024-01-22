@@ -16,7 +16,7 @@ struct Errno {
 }
 
 impl fmt::Display for Errno {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "errno {}", self.errno)
     }
 }
@@ -47,10 +47,10 @@ fn my_cgroup() -> Result<PathBuf> {
 }
 
 fn parse_effective_cpus(raw_cpus: String) -> Result<c_int> {
-    let intervals = raw_cpus.trim().split(",");
+    let intervals = raw_cpus.trim().split(',');
     let counts = intervals
         .map(|i| -> Result<c_int> {
-            let membs: Vec<_> = i.split("-").collect();
+            let membs: Vec<_> = i.split('-').collect();
             if let [start, end] = &membs[..] {
                 Ok(end.parse::<c_int>()? - start.parse::<c_int>()? + 1)
             } else if let [single] = &membs[..] {
@@ -92,10 +92,10 @@ fn r_num_cpus() -> Result<c_int> {
 }
 
 fn flatten_result(r: Result<c_int>) -> c_int {
-    return match r {
+    match r {
         Ok(i) => i,
         Err(e) => -e.errno,
-    };
+    }
 }
 
 #[no_mangle]

@@ -19,6 +19,10 @@ lint:
 	rustfmt --check $(SRC)
 	cargo clippy --all-targets --all-features -- -D warnings -D rust-2018-idioms -D rust-2021-compatibility -A clippy::upper-case-acronyms
 
+.PHONY: fmt
+fmt:
+	rustfmt $(SRC)
+
 .PHONY: clean
 clean:
 	-rm -rf target example
