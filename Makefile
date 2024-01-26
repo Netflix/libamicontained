@@ -9,7 +9,7 @@ lib:
 .PHONY: check
 check: example
 	RUST_BACKTRACE=1 cargo test
-	bats -t $(patsubst %,test/%.bats,$(TEST))
+	sudo bats -t $(patsubst %,test/%.bats,$(TEST))
 
 %: %.c lib
 	gcc -static -o $@ $< -I./include -L./target/release -lamicontained

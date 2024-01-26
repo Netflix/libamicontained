@@ -1,25 +1,31 @@
 ROOT_DIR=$(git rev-parse --show-toplevel)
 
-function make_tempdir()
+function make_cgroup()
 {
-    declare -g TEMP_DIR=$(mktemp -p $(pwd) -d huldufolk-test.XXXXXXXX)
+    declare -g CGROUP_DIR=$(mktemp -p /sys/fs/cgroup -d libamicontained-test.XXXXXXXX)
 }
 
 function cleanup {
-    rm -rf "$TEMP_DIR"
-}
-
-function setup_fake_rootfs {
-    make_tempdir
-
-    mkdir -p "$TEMP_DIR/sys/fs/cgroup/" "$TEMP_DIR/proc/self"
-    echo "0::/" > "$TEMP_DIR/proc/self/cgroup"
-    echo 0-1 > "$TEMP_DIR/sys/fs/cgroup/cpuset.cpus.effective"
-    ln "$ROOT_DIR/example" "$TEMP_DIR/example"
+    rmdir "$CGROUP_DIR"
 }
 
 function check_num_cpus {
-    run unshare -Urm --root="$TEMP_DIR" /example
-    echo $output
+    expected_num_cpus=$1
+    expected_recommended_threads=$2
+
+    real_cgroup="/sys/fs/cgroup/tests.slice/$TEMP_NAME"
+    output=$(sh -c 'echo $$ > '"$CGROUP_DIR/cgroup.procs; exec $ROOT_DIR/example")
+    status=$?
     [ "$status" -eq 0 ]
+
+    output=$(echo $output | tr -d '\n')
+    echo "output: $output"
+
+    # Construct the expected output string without newlines
+    expected_output="num_cpus ${expected_num_cpus} recommended_threads ${expected_recommended_threads}"
+
+    # Remove newlines from the actual output
+    echo "expected output: $expected_output"
+
+    [ "$output" == "$expected_output" ]
 }
