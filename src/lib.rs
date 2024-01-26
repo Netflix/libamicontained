@@ -46,6 +46,26 @@ fn my_cgroup() -> Result<PathBuf> {
     return Ok(PathBuf::from(cgroups[4..].trim()));
 }
 
+// Starting from the base_cg, traverses the cgroup heirarchy and returns the first set/non-empty
+// contents of the given cgroup controller.
+// Returns an error if there is no such file.
+fn read_cg_controller(base_cg: PathBuf, controller_name: &str) -> Result<String> {
+    let mut cur = Some(base_cg.as_path());
+
+    while let Some(cg) = cur {
+        let path: PathBuf = ["/sys/fs/cgroup", &cg.to_string_lossy(), controller_name]
+            .iter()
+            .collect();
+
+        match fs::read_to_string(&path) {
+            Ok(v) if !v.trim().is_empty() => return Ok(v),
+            _ => cur = cg.parent(),
+        }
+    }
+
+    Err(Errno { errno: ENOENT })
+}
+
 fn parse_effective_cpus(raw_cpus: String) -> Result<c_int> {
     let intervals = raw_cpus.trim().split(',');
     let counts = intervals
@@ -64,31 +84,49 @@ fn parse_effective_cpus(raw_cpus: String) -> Result<c_int> {
 }
 
 fn effective_cpus_count(base_cg: PathBuf) -> Result<c_int> {
-    let mut cur = Some(base_cg.as_path());
+    let raw_cpus = read_cg_controller(base_cg, "cpuset.cpus.effective")?;
+    parse_effective_cpus(raw_cpus)
+}
 
-    while let Some(cg) = cur {
-        let path: PathBuf = [
-            "/sys/fs/cgroup",
-            &cg.to_string_lossy(),
-            "cpuset.cpus.effective",
-        ]
-        .iter()
-        .collect();
+fn parse_cfs_quota_as_cpus(cpus_max: String) -> Result<c_int> {
+    let parts: Vec<&str> = cpus_max.split_whitespace().collect();
+    if parts.len() != 2 {
+        return Err(Errno { errno: EINVAL });
+    }
+    let quota: c_int = parts[0].parse().map_err(|_| Errno { errno: EINVAL })?;
+    let period: c_int = parts[1].parse().map_err(|_| Errno { errno: EINVAL })?;
 
-        if let Ok(v) = fs::read_to_string(&path) {
-            return parse_effective_cpus(v);
-        }
-
-        cur = cg.parent()
+    if period == 0 {
+        return Err(Errno { errno: EINVAL }); // Avoid division by zero
     }
 
-    Err(Errno { errno: ENOENT })
+    // The way we convert quota to cpu count is by modelling full time on one cfs_period as one cpu.
+    // Thus 100% is 1 cpu, 200% is 2 and so on. We return 1 cpu if the quota is <100% as well.
+    // This is how systemd models CPUQuota as well as lxcfs.
+    let cpu_count = (quota / period) as c_int;
+    Ok(c_int::max(cpu_count, 1))
+}
+
+fn cpu_count_from_quota(base_cg: PathBuf) -> Result<c_int> {
+    let cpus_max = read_cg_controller(base_cg, "cpu.max")?;
+    parse_cfs_quota_as_cpus(cpus_max)
 }
 
 fn r_num_cpus() -> Result<c_int> {
     let cg = my_cgroup()?;
     // TODO: we should do more than just query effective CPUs.
     effective_cpus_count(cg)
+}
+
+fn r_num_threads() -> Result<c_int> {
+    let phys_cpus = r_num_cpus()?;
+    let cg = my_cgroup()?;
+
+    // Take cfs quota into account
+    match cpu_count_from_quota(cg) {
+        Ok(quota_cpus) if quota_cpus < phys_cpus => Ok(quota_cpus),
+        _ => Ok(phys_cpus),
+    }
 }
 
 fn flatten_result(r: Result<c_int>) -> c_int {
@@ -105,8 +143,7 @@ pub extern "C" fn num_cpus() -> c_int {
 
 #[no_mangle]
 pub extern "C" fn recommended_threads() -> c_int {
-    // TODO: we should do something fancier here
-    num_cpus()
+    flatten_result(r_num_threads())
 }
 
 #[cfg(test)]
