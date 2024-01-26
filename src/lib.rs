@@ -1,3 +1,6 @@
+use nix::sched::sched_getaffinity;
+use nix::sched::CpuSet;
+use nix::unistd::Pid;
 use std::ffi::c_int;
 use std::fmt;
 use std::fs;
@@ -35,6 +38,12 @@ impl From<ParseIntError> for Errno {
     }
 }
 
+impl From<nix::errno::Errno> for Errno {
+    fn from(err: nix::errno::Errno) -> Self {
+        Errno { errno: err as i32 }
+    }
+}
+
 fn my_cgroup() -> Result<PathBuf> {
     let cgroups = fs::read_to_string("/proc/self/cgroup")?;
 
@@ -66,28 +75,6 @@ fn read_cg_controller(base_cg: PathBuf, controller_name: &str) -> Result<String>
     Err(Errno { errno: ENOENT })
 }
 
-fn parse_effective_cpus(raw_cpus: String) -> Result<c_int> {
-    let intervals = raw_cpus.trim().split(',');
-    let counts = intervals
-        .map(|i| -> Result<c_int> {
-            let membs: Vec<_> = i.split('-').collect();
-            if let [start, end] = &membs[..] {
-                Ok(end.parse::<c_int>()? - start.parse::<c_int>()? + 1)
-            } else if let [single] = &membs[..] {
-                Ok(single.parse::<c_int>()?)
-            } else {
-                Err(Errno { errno: EINVAL })
-            }
-        })
-        .collect::<Result<Vec<c_int>>>()?;
-    Ok(counts.iter().sum())
-}
-
-fn effective_cpus_count(base_cg: PathBuf) -> Result<c_int> {
-    let raw_cpus = read_cg_controller(base_cg, "cpuset.cpus.effective")?;
-    parse_effective_cpus(raw_cpus)
-}
-
 fn parse_cfs_quota_as_cpus(cpus_max: String) -> Result<c_int> {
     let parts: Vec<&str> = cpus_max.split_whitespace().collect();
     if parts.len() != 2 {
@@ -112,10 +99,22 @@ fn cpu_count_from_quota(base_cg: PathBuf) -> Result<c_int> {
     parse_cfs_quota_as_cpus(cpus_max)
 }
 
+fn get_affinity_cpu_count() -> Result<c_int> {
+    let pid = Pid::from_raw(0);
+    let cpuset = sched_getaffinity(pid)?;
+
+    let mut count = 0;
+    for cpu in 0..CpuSet::count() {
+        if cpuset.is_set(cpu)? {
+            count += 1;
+        }
+    }
+
+    Ok(count as c_int)
+}
+
 fn r_num_cpus() -> Result<c_int> {
-    let cg = my_cgroup()?;
-    // TODO: we should do more than just query effective CPUs.
-    effective_cpus_count(cg)
+    get_affinity_cpu_count()
 }
 
 fn r_num_threads() -> Result<c_int> {
